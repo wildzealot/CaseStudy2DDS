@@ -1,0 +1,700 @@
+---
+gettitle: "Project 2"
+author: "I.A.Wilds"
+date: "3/5/2020"
+output: html_document
+---
+
+o	an executive summary
+  The following RMarkdown will seek to perform analysis of three datasets using machine learning techniques. The data set will be used to determine which factors are the leading causes of attrition among the employees of the company. 
+  Multiple machine learning methods will be used to determine which one yileds the best rates of accuracy, specificity, and sensitivity.
+  The ultimate goal will be to predict missing attrition and monthly income values from two data sets to be used follwing a sufficient level of confidence in the models.
+  
+o	 introduction to the project
+  I will begin by systematically trying each machine learning method. The four methods used will be Naive Bayes, k-NN, Simple Linear Regression, and Random Forest.
+  
+o	all supporting code and analysis will be found within this document. I have separated them by code chunks for ease of viewing.
+
+o	and the slides for this presentation will be available on Youtube at https://youtu.be/01KKtmh-oX0
+
+o	The prediction csv files for attrition and monthly income can be found at https://github.com/wildzealot/CaseStudy2DDS
+
+
+
+```{r libraries, include=FALSE}
+library(XML) #xml_Parse
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(stringi)
+library(ggplot2)
+library(plotly)
+library(tidyverse)
+library(datasets)
+library(class)
+library(caret)
+library(jsonlite)
+library(e1071)
+library(rvest)
+library(caretEnsemble)
+library(psych)
+library(Amelia)
+library(mice)
+library(rpart)
+library(randomForest)
+library(LaplacesDemon)
+library(mosaic)
+library(miscTools)
+library(Metrics)
+
+
+```
+
+```{r}
+
+case <- readHTMLTable("C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/CaseStudy2-data.CSV",header = TRUE)
+case2 <- readHTMLTable("C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/CaseStudy2-data.CSV",header = TRUE)
+#NO ATTRITION
+caseNoAtt <- readHTMLTable("C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/CaseStudy2CompSet No Attrition.CSV",header = TRUE)
+caseNoAtt2 <- readHTMLTable("C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/CaseStudy2CompSet No Attrition.CSV",header = TRUE)
+#NO SALARY
+caseNoSal <- read.csv("C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/NoSalary2.csv",header = TRUE)
+caseNoSal2 <- read.csv("C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/NoSalary2.csv",header = TRUE)
+
+# dataframe was a list of 1 called "NULL"
+case <- case[["NULL"]]
+caseNoAtt <- caseNoAtt[["NULL"]]
+
+
+# the #2s have removed the factors and are only integers or numerics
+case2 <- case2[["NULL"]]
+caseNoAtt2 <- caseNoAtt2[["NULL"]]
+
+
+# dataframe had an empty vector
+case <- case[,-1]
+caseNoAtt <- caseNoAtt[,-1]
+
+
+case2 <- case2[,-1]
+caseNoAtt2 <- caseNoAtt2[,-1]
+
+
+# check for missing values
+#which(is.na(case))
+#View(case)
+depth <- describe(case)
+#view(depth)
+
+# remove vectors with useless information (ID,Employee count, employee number, over 18, standard hours)
+useless <- c("EmployeeCount","EmployeeNumber","Over18","StandardHours") 
+case <- case[, ! names(case) %in% useless, drop = F]
+useless2 <- c("EmployeeCount","EmployeeNumber","Over18","StandardHours")
+caseNoAtt <- caseNoAtt[, ! names(caseNoAtt) %in% useless2, drop = F]
+caseNoSal<- caseNoSal[, ! names(caseNoSal) %in% useless2, drop = F]
+# table(case$Attrition)
+
+# No Yes 
+# 730 140 
+
+
+# change factor type vectors to integers without changing the true value.
+listy <- c(1,2,5,7,8,10,11,12,14,15,16,18,20,21,22,25,26,27,28,29,30,31,32,33,34,35,36)            
+for (i in listy) {
+  case2[,i] <- as.integer(as.character(case2[,i]))
+}
+#glimpse(case)
+
+case2 <- subset(case2, select = -c(EmployeeCount,EmployeeNumber,Over18,StandardHours))
+caseNoAtt2 <- subset(caseNoAtt2, select = -c(EmployeeCount,EmployeeNumber,Over18,StandardHours))
+caseNoSal2 <- subset(caseNoSal2, select = -c(EmployeeCount,EmployeeNumber,Over18,StandardHours))
+
+# + EnvironmentSatisfaction + JobInvolvement + JobLevel + JobSatisfaction + PercentSalaryHike + PerformanceRating + StockOptionLevel + TotalWorkingYears + TrainingTimesLastYear + WorkLifeBalance + YearsAtCompany + YearsInCurrentRole + YearsSinceLastPromotion + YearsWithCurrManager
+
+case2$Attrition <- as.character(case2$Attrition)
+# convert the attrition values to 1 or 0.
+for (q in 1:870) {
+  # The No or still employed will be represented by the number 1
+  if (case2$Attrition[q] == "No") {
+    case2$Attrition[q] = 1
+  } else{
+    # those who have retire or resigned will be represented by the number 2
+    case2$Attrition[q] = 2
+  }
+}
+
+caseNoSal2$Attrition <- as.character(caseNoSal2$Attrition)
+# convert the attrition values to 1 or 0.
+for (q in 1:300) {
+  # The No or still employed will be represented by the number 1
+  if (caseNoSal2$Attrition[q] == "No") {
+    caseNoSal2$Attrition[q] = 1
+  } else{
+    # those who have retire or resigned will be represented by the number 2
+    caseNoSal2$Attrition[q] = 2
+  }
+}
+
+# build training/testing sets to be used in both models
+set.seed(1234)
+# 70% of case data is used for training
+casetrainOBS <- sample(seq(1,dim(case)[1]),round(.70*dim(case)[1]),replace = FALSE)
+casetrain <- case[casetrainOBS,]
+casetest <- case[-casetrainOBS,]
+
+
+
+# build training/testing sets to be used in both models WITHOUT FACTORS
+set.seed(1234)
+# 70% of case data is used for training
+casetrainOBS2 <- sample(seq(1,dim(case2)[1]),round(.70*dim(case2)[1]),replace = FALSE)
+casetrain2 <- case2[casetrainOBS2,]
+casetest2 <- case2[-casetrainOBS2,]
+
+yass <- filter(case,case$Attrition == "Yes")
+yass2 <- filter(case,case2$Attrition == "2")
+
+```
+
+
+```{r}
+#Naive Bayes
+
+#casetrain$Attrition <- as.factor(casetrain$Attrition)
+modelnb <- naiveBayes(Attrition ~ EnvironmentSatisfaction + WorkLifeBalance +  + JobLevel + JobSatisfaction + RelationshipSatisfaction + OverTime + PerformanceRating + JobRole + YearsInCurrentRole + StockOptionLevel + JobInvolvement + TotalWorkingYears + YearsSinceLastPromotion, data = casetrain)
+# modelnb
+
+ dfnb <- data.frame(Attrition = "Yes", 
+                   EnvironmentSatisfaction = casetest$EnvironmentSatisfaction,
+                   WorkLifeBalance = casetest$WorkLifeBalance,
+                   JobLevel = casetest$JobLevel,
+                   JobSatisfaction = casetest$JobSatisfaction,
+                   RelationshipSatisfaction = casetest$RelationshipSatisfaction,
+                   OverTime = casetest$OverTime,
+                   PerformanceRating = casetest$PerformanceRating,
+                   JobRole = casetest$JobRole,
+                   YearsInCurrentRole = casetest$YearsInCurrentRole,
+                   StockOptionLevel = casetest$StockOptionLevel,
+                   JobInvolvement = casetest$JobInvolvement,
+                   TotalWorkingYears = casetest$TotalWorkingYears,
+                   YearsSinceLastPromotion = casetest$YearsSinceLastPromotion
+                   
+                   #Education = casetest$Education,
+                   #EducationField = casetest$EducationField,
+                   #BusinessTravel = casetest$BusinessTravel,
+                   #Gender = casetest$Gender,
+                   #NumCompaniesWorked = casetest$NumCompaniesWorked,
+                   #MaritalStatus = casetest$MaritalStatus,
+                   #PercentSalaryHike = casetest$PercentSalaryHike,
+                   #TrainingTimesLastYear = casetest$TrainingTimesLastYear,
+                   #YearsAtCompany = casetest$YearsAtCompany,
+                   #YearsWithCurrManager = casetest$YearsWithCurrManager
+                   )                 
+ 
+# predict using the model and the populated datafame
+prednb <- predict(modelnb,dfnb, interval = "prediction")
+# create a table using the prediction and the test values
+tablenb <- table(prednb,casetest$Attrition)
+#  use a confusion matrix to check prediciton accuracy
+confnb <- confusionMatrix(tablenb)
+confnb
+
+# ACCURACY = 0.8659
+# 25 OF 37 CORRECT ATTRITION DETECTION
+
+
+```
+
+
+```{r}
+#k-Nearest Neighbor
+# YearsInCurrentRole + MaritalStatus + StockOptionLevel + YearsWithCurrManager + OverTime + YearsAtCompany 
+splitPerc = .70
+set.seed(6)
+
+# 1,9,12,13,15,22,23,24,25,27,29
+# 30,17,25,32,21,29
+# create a dataframe to hold the accuracy values based on k iterations
+accu = data.frame(accuracy = numeric(90), k = numeric(90))
+
+#change the factors to numeric
+casetrain2$MaritalStatus <- as.numeric(casetrain2$MaritalStatus)
+casetrain2$OverTime <- as.numeric(casetrain2$OverTime)
+casetest2$MaritalStatus <- as.numeric(casetest2$MaritalStatus)
+casetest2$OverTime <- as.numeric(casetest2$OverTime)
+
+# iterate through k = 1 - 90
+for (i in 1:90) {
+  case2 %>% ggplot(aes(x = case2$Attrition,y = case2$JobSatisfaction ,color = case2$Attrition)) + geom_point()
+  
+  
+  classified = knn(casetrain2[,c(30,17,25,32,21,29)],
+                   casetest2[,c(30,17,25,32,21,29)],
+                   casetrain2$Attrition, prob = TRUE, k = i)
+  table(casetest2$Attrition,classified)
+  conmatrx <- confusionMatrix(table(casetest2$Attrition,classified))
+  accu$accuracy[i] = conmatrx$overall[1]
+  accu$k[i] = i
+}
+
+# Make a plot of k (xaxis) versus accuracy.
+accuplot <- ggplot(accu,aes(x=k,y=accuracy)) +
+  geom_line() +
+  labs(x="Tally",y="Accuracy")
+accuplot2 <-ggplotly(accuplot)
+
+accuplot2
+# k = 5 yields the highest accuracy
+
+
+tunedcase <- knn(casetrain2[,c(30,17,25,32,21,29)],
+                   casetest2[,c(30,17,25,32,21,29)],
+                   casetrain2$Attrition, prob = TRUE,k=5)
+tunedtable <- table(casetest2$Attrition,tunedcase)
+tunedcaseconfmatrix <- confusionMatrix(tunedtable)
+tunedcaseconfmatrix
+
+
+# ACCURACY = 0.8429
+# 10 OF 48 ATTRITION CORRECTLY DETECTED
+```
+
+```{r}
+# Simple Linear Regression Model
+
+
+lmmodel <- lm(Attrition ~ OverTime + JobRole + StockOptionLevel + JobInvolvement + YearsSinceLastPromotion + WorkLifeBalance + JobSatisfaction + EducationField + BusinessTravel + NumCompaniesWorked + MaritalStatus + TrainingTimesLastYear + YearsAtCompany, data = case2)
+#summary(lmmodel)
+
+#confint(lmmodel)
+
+
+casefit <- lm(Attrition ~ OverTime + JobRole + StockOptionLevel + JobInvolvement + YearsSinceLastPromotion + WorkLifeBalance + JobSatisfaction + EducationField + BusinessTravel + NumCompaniesWorked + MaritalStatus + TrainingTimesLastYear + YearsAtCompany, data = casetrain2)
+
+
+casefit_pred <- predict(casefit, casetest2)
+casepred_df <- as.data.frame(casefit_pred)
+
+case2$Attrition <- as.numeric(case2$Attrition)
+MSPE <- data.frame(Observed = casetest2$Attrition, Predicted = casepred_df$casefit_pred)
+MSPE$Observed <- as.numeric(MSPE$Observed)
+MSPE$Residual = MSPE$Observed - MSPE$Predicted
+MSPE$SquareResidual = MSPE$Residual^2
+
+MSPEmean <- mean(MSPE$SquareResidual)
+MSPEmean
+
+summary(casefit)
+confint(casefit)
+
+# Mean Square Prediction Error 0.1291826
+
+```
+Many statistical software packages include a very helpful analysis. They can calculate the increase in R-squared when each variable is added to a model that already contains all of the other variables. In other words, how much does the R-squared increase for each variable when you add it to the model last?
+
+```{r}
+# RANDOM FOREST
+
+require(caTools)
+set.seed(1234)
+
+# a vector for tuning the mtry value
+mtrytuner <- expand.grid(.mtry = 17)
+controller <-trainControl(method = "cv",number = 20, search = "grid")
+
+
+# the initial random forest run
+basic <- train(Attrition~OverTime + JobRole + StockOptionLevel + JobInvolvement + YearsSinceLastPromotion + WorkLifeBalance + JobSatisfaction + EducationField + BusinessTravel + NumCompaniesWorked + MaritalStatus + TrainingTimesLastYear + YearsAtCompany,
+               casetrain,
+               method="rf",
+               metric="Accuracy",
+               tuneGrid=mtrytuner,
+               trControl=controller,
+               importance = TRUE,
+               nodesize = 14,
+               ntree = 350)
+
+basic
+```
+
+
+```{r}
+# best accuracy mtry 17 accuracy 0.8686
+# TESTING ONLY
+
+# Accuracy was used to select the optimal model using the largest value.
+#The final value used for the model was mtry = 13.
+# 13    0.8638598  0.16880787
+# maxnodes = 12
+#max(basic$results$Accuracy)
+
+# iterate through different values of maxnodes for best value
+best_mtry <- basic$bestTune$mtry
+
+store_maxnode <- list()
+tuneGrid <- expand.grid(.mtry = best_mtry)
+for (maxnodes in c(5: 15)) {
+    set.seed(1234)
+    rf_maxnode <- train(Attrition~OverTime + JobRole + StockOptionLevel + JobInvolvement + YearsSinceLastPromotion + WorkLifeBalance + JobSatisfaction + EducationField + BusinessTravel + NumCompaniesWorked + MaritalStatus + TrainingTimesLastYear + YearsAtCompany,
+        data = casetrain,
+        method = "rf",
+        metric = "Accuracy",
+        tuneGrid = tuneGrid,
+        trControl = controller,
+        importance = TRUE,
+        nodesize = 14,
+        maxnodes = maxnodes,
+        ntree = 350)
+    current_iteration <- toString(maxnodes)
+    store_maxnode[[current_iteration]] <- rf_maxnode
+}
+results_mtry <- resamples(store_maxnode)
+summary(results_mtry)
+```
+
+
+```{r}
+# iterate through number of ntree values for best fit
+# TESTING ONLY
+
+store_maxtrees <- list()
+for (ntree in c(250, 300, 350, 400, 450, 500, 550, 600, 800, 1000, 2000)) {
+    set.seed(5678)
+    rf_maxtrees <- train(Attrition~OverTime + JobRole + StockOptionLevel + JobInvolvement + YearsSinceLastPromotion + WorkLifeBalance + JobSatisfaction + EducationField + BusinessTravel + NumCompaniesWorked + MaritalStatus + TrainingTimesLastYear + YearsAtCompany,
+        data = casetrain,
+        method = "rf",
+        metric = "Accuracy",
+        tuneGrid = tuneGrid,
+        trControl = controller,
+        importance = TRUE,
+        nodesize = 14,
+        maxnodes = 12,
+        ntree = ntree)
+    key <- toString(ntree)
+    store_maxtrees[[key]] <- rf_maxtrees
+}
+results_tree <- resamples(store_maxtrees)
+summary(results_tree)
+
+# the best node size is 350
+```
+
+```{r}
+
+lastforest <- randomForest(Attrition~OverTime + JobRole + StockOptionLevel + JobInvolvement + YearsSinceLastPromotion + WorkLifeBalance + JobSatisfaction + EducationField + BusinessTravel + NumCompaniesWorked + MaritalStatus + TrainingTimesLastYear + YearsAtCompany,
+        data = casetrain,
+        method = "rf",
+        metric = "Accuracy",
+        tuneGrid = tuneGrid,
+        trControl = controller,
+        importance = TRUE,
+        nodesize = 14,
+        ntree = 350)
+
+
+# Predicting on train set
+print("Training set prediction")
+predTrain <- predict(lastforest, casetrain, type = "class")
+# Checking classification accuracy
+table(predTrain, casetrain$Attrition)  
+predTrain
+
+print("Test set prediciton")
+randompred <- predict(lastforest, casetest)
+#randompred
+confrandom <- confusionMatrix(randompred,casetest$Attrition)
+confrandom
+
+# Prediction  No Yes
+#       No  212  41
+#       Yes   1   7
+                                          
+# Accuracy : 0.8391 
+varImp(basic)
+varImpPlot(lastforest)
+# OverTime                           100.000
+# StockOptionLevel                    49.726
+# JobRoleSales Representative         47.507
+
+```
+
+
+```{r}
+jobz <- ggplot(yass,x=JobRole,y=StockOptionLevel,aes(color = OverTime),position = "dodge") +
+  geom_jitter(stat = "identity",aes(x=JobRole,y=StockOptionLevel),binwidth = 1, alpha=1.0) +
+  geom_hline(yintercept=1, alpha=1.0) + 
+  facet_grid(.~MaritalStatus) +
+    theme(axis.text.x = element_text(angle = -30, hjust = 0.1),
+        plot.title = element_text(hjust = 0.5),
+         strip.background = element_rect(fill="lightblue")) +
+        
+  labs(title = "Correlation of Overtime, Stock option levels, and specific job roles by Marital Status",
+       x = "Job Roles of members",
+       y = "Stock Option Level of resigned/retired members") +
+  theme(text = element_text(family = 'Fira Sans'),
+        panel.background = element_rect(fill = "darkblue"))
+  
+jobz <- ggplotly(jobz)
+jobz
+```
+
+
+
+
+```{r}
+
+# correlate env satisfaction with job involvement and job satisfaction against attrition
+# facet env sat, color att
+
+satis <- ggplot(case, x=JobInvolvement,y=JobSatisfaction) +
+  geom_jitter(stat = "identity",aes(x=JobInvolvement,y=JobSatisfaction,color=Attrition)) +
+  facet_grid(.~EnvironmentSatisfaction) +
+  theme_dark()
+satis <- ggplotly(satis)
+
+# job role satisfaction
+# Attrition only
+#job involv, job satis, work life, env sat
+jobsatis <- ggplot(case, x=JobInvolvement,y=JobSatisfaction) +
+  geom_jitter(stat = "identity",aes(x=JobRole,y=JobSatisfaction,color=WorkLifeBalance)) +
+  facet_grid(.~EnvironmentSatisfaction) +
+  theme(axis.text.x = element_text(angle = -30, hjust = 0.1),
+        plot.title = element_text(hjust = 0.5),
+         strip.background = element_rect(fill="lightblue")) +
+        
+  labs(title = "Over all satisfaction of resigned/retired members by specific job roles and work life balance",
+       x = "Job Roles of members",
+       y = "Job satisfaction of resigned/retired members") +
+  theme(text = element_text(family = 'Fira Sans'),
+        panel.background = element_rect(fill = "darkgrey"))
+jobsatis <- ggplotly(jobsatis)
+
+
+
+# Is it personal?
+# MaritalStatus, WorkLifeBalance, ,RelationshipSatisfaction
+
+
+person <- ggplot(yass, x=WorkLifeBalance,y=RelationshipSatisfaction) +
+  geom_jitter(stat = "identity",aes(WorkLifeBalance,y=RelationshipSatisfaction,color=Education)) +
+  facet_grid(.~MaritalStatus) +
+  theme_dark()
+person <- ggplotly(person)
+
+
+
+
+
+```
+
+•	an additional data set of 300 observations that do not have the labels (attrition or not attrition).  We will refer to this data set as the “Competition Set” and is in the file “CaseStudy2CompSet No Attrition.csv”
+•	10% of your grade will depend on the sensitivity and specificity rate of your “best” classification model for identifying attrition.
+•	You must provide a model that will attain at least 60% sensitivity and specificity (60 each = 120 total) for the training and the validation set.
+•	Therefore, you must provide the labels (ordered by ID) in a csv file. ID AND ATTRITION
+•	Please include this in your GitHub repository and call the file “Case2PredictionsXXXX Attrition.csv”.  XXXX is your last name.  (Example: Case2PredictionsSadler Attrition.csv” would be mine.)
+
+```{r}
+# COMPETITION SET
+
+#NAIVE BAYES COMPETITION SET
+# intput the predicted values into the caseNoAtt dataframe and use different name
+# attritionfill is the NEW TEST SET
+attritionfill  <- caseNoAtt
+#attritdrop <- c("ID") 
+#attritionfill <- attritionfill[, ! names(attritionfill) %in% attritdrop, drop = F]
+attritionfill$Attrition <- predict(modelnb,caseNoAtt)
+#table(predict(modelnb,caseNoAtt))
+#
+# No Yes 
+#272  28
+
+attritionfill <- attritionfill[,c(1,2,32,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31)]
+
+AtFill2 <- caseNoAtt2
+AtFill2$Attrition <- predict(modelnb,caseNoAtt2)
+AtFill2 <- AtFill2[,c(1,2,32,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31)]
+# place each prediction into the dataframe to replace the NA values
+#  for (x in 1:300) {
+#    
+#    attritionfill[x,2] <- predcomp[x]
+#  }
+
+
+# change factor type vectors to integers without changing the true value.
+listy <- c(1,2,5,7,8,10,12,13,14,16,18,19,20,22,23,24,25,26,27,28,29,30,31,32)            
+for (i in listy) {
+  AtFill2[,i] <- as.integer(as.character(AtFill2[,i]))
+}
+
+
+#glimpse(case)
+AtFill2$Attrition <- as.character(AtFill2$Attrition)
+# convert the attrition values to 1 or 0.
+for (q in 1:300) {
+  # The No or still employed will be represented by the number 1
+  if (AtFill2$Attrition[q] == "No") {
+    AtFill2$Attrition[q] = 1
+  } else{
+    # those who have retire or resigned will be represented by the number 2
+    AtFill2$Attrition[q] = 2
+  }
+}
+
+
+
+AtFill2$MaritalStatus <- as.numeric(AtFill2$MaritalStatus)
+casetrain2$MaritalStatus <- as.numeric(casetrain2$MaritalStatus)
+AtFill2$JobRole <- as.numeric(AtFill2$JobRole)
+casetrain2$JobRole <- as.numeric(casetrain2$JobRole)
+AtFill2$OverTime <- as.numeric(AtFill2$OverTime)
+casetrain2$OverTime <- as.numeric(casetrain2$OverTime)
+AtFill2$EducationField <- as.numeric(AtFill2$EducationField)
+casetrain2$EducationField <- as.numeric(casetrain2$EducationField)
+AtFill2$BusinessTravel <- as.numeric(AtFill2$BusinessTravel)
+casetrain2$BusinessTravel <- as.numeric(casetrain2$BusinessTravel)
+
+# take a random sample of casetest and add enough to reach 300
+set.seed(1234)
+# 70% of case data is used for training
+newCaseTesthold <- sample(seq(1,dim(casetest)[1]),round(.149*dim(casetest)[1]),replace = FALSE)
+newCasetest <- casetest[newCaseTesthold,]
+lame <- rbind(casetest,newCasetest)
+
+
+modelnb <- naiveBayes(Attrition ~ EnvironmentSatisfaction + WorkLifeBalance +  + JobLevel + JobSatisfaction + RelationshipSatisfaction + OverTime + PerformanceRating + JobRole + YearsInCurrentRole + StockOptionLevel + JobInvolvement + TotalWorkingYears + YearsSinceLastPromotion, data = casetrain)
+
+predattrit <- predict(modelnb,attritionfill,interval="prediction")
+tablecomp <- table(predattrit,lame$Attrition)
+confattrit <- confusionMatrix(tablecomp)
+print("Naive Bayes Competition Set Results")
+confattrit
+
+#kNN COMPETITION SET
+# WINNER-WINNER-WINNER-WINNER-WINNER-WINNER-WINNER
+tunedCOMP <- knn(casetrain2[,c(21,15,25,13,31,28,16,9,4,20,17,27,29)],
+                   AtFill2[,c(21,15,25,13,31,28,16,9,4,20,17,27,29)],
+                   casetrain2$Attrition, prob = TRUE,k=5)
+tunedtableCOMP <- table(AtFill2$Attrition,tunedCOMP)
+tunedcaseconfmatrixCOMP <- confusionMatrix(tunedtableCOMP)
+print("kNN Competition Set Results")
+tunedcaseconfmatrixCOMP
+
+# CREATE A CSV WITH ID AND ATTRITION
+winner <- select(AtFill2,ID,Attrition)
+for (q in 1:300) {
+  # The No or still employed will be represented by the number 1
+  if (winner$Attrition[q] = "No") {
+    winner$Attrition[q] = 1
+  } else{
+    # those who have retire or resigned will be represented by the number 2
+    winner$Attrition[q] = 2
+  }
+}
+
+
+write.csv(winner,"C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/Case2PredictionsWILDS Attrition.csv", row.names = FALSE)
+
+casefit <- lm(Attrition ~ OverTime + JobRole + StockOptionLevel + JobInvolvement + YearsSinceLastPromotion + WorkLifeBalance + JobSatisfaction + EducationField + BusinessTravel + NumCompaniesWorked + MaritalStatus + TrainingTimesLastYear + YearsAtCompany, data = casetrain2)
+
+
+casefit_predCOMP <- predict(casefit,AtFill2)
+casepred_dfCOMP <- as.data.frame(casefit_predCOMP)
+
+case2$Attrition <- as.numeric(case2$Attrition)
+MSPECOMP <- data.frame(Observed = attritionfill$Attrition, Predicted = casepred_dfCOMP$casefit_predCOMP)
+MSPECOMP$Observed <- as.numeric(MSPECOMP$Observed)
+MSPECOMP$Residual = MSPECOMP$Observed - MSPECOMP$Predicted
+MSPECOMP$SquareResidual = MSPECOMP$Residual^2
+
+MSPECOMPmean <- mean(MSPECOMP$SquareResidual)
+print("Simple Linear Regression Competition Set Results")
+MSPECOMPmean
+
+summary(casefit)
+confint(casefit)
+
+```
+
+
+
+•	an additional data set of 300 observations that do not have the Monthly Incomes.  This data is in the file “CaseStudy2CompSet No Salary.csv”.
+•	10% of your grade will depend on the RMSE (Root Mean square error) of your final model
+•	You must provide a model that will attain a RMSE < $3000 for the training and the validation set.rmse = sqrt( mean( (sim - obs)^2, na.rm = TRUE) )
+•	you must provide the predicted salaries (ordered by ID) in a csv file. ID AND MONTHLY INCOME
+•	Please include this in your GitHub repository and call the file “Case2PredictionsXXXX Salary.csv”.  XXXX is your last name.  (Example: Case2PredictionsSadler Salary.csv” would be mine.)  An example submission file can be found on GitHub: Case2PredictionsRegressEXAMPLE.csv.
+
+```{r}
+# NO SALARY SET
+
+# Use the Naive Bayes model to predict the missing values
+modelnb2 <- naiveBayes(MonthlyIncome ~ EnvironmentSatisfaction + JobLevel + JobSatisfaction + PerformanceRating + JobRole + YearsInCurrentRole + StockOptionLevel + JobInvolvement + TotalWorkingYears + YearsSinceLastPromotion + YearsAtCompany, data = casetrain)
+dfnosal <- as.data.frame(caseNoSal)
+
+for (t in 1:ncol(dfnosal)) {
+  dfnosal[,t] <- as.factor(dfnosal[,t])
+}
+
+predict(modelnb2,dfnosal)
+
+caseNoSal$MonthlyIncome <- predict(modelnb2,dfnosal,interval = "prediciton")
+# IF YOU DO THIS WITHOUT RESETTING THE VARIABLE EVERYTHING WILL BREAK!!!!!!!!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#caseNoSal <- caseNoSal[,c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,32,18,19,20,21,22,23,24,25,26,27,28,29,30,31)]
+caseNoSal[,18] <- as.numeric(as.character(caseNoSal[,18]))
+
+#OverTime,JobRole,EducationField,BusinessTravel,MaritalStatus
+caseNoSal$MaritalStatus <- as.numeric(caseNoSal$MaritalStatus)
+casetrain2$MaritalStatus <- as.numeric(casetrain2$MaritalStatus)
+
+caseNoSal$JobRole <- as.numeric(caseNoSal$JobRole)
+casetrain2$JobRole <- as.numeric(casetrain2$JobRole)
+
+caseNoSal$OverTime <- as.numeric(caseNoSal$OverTime)
+casetrain2$OverTime <- as.numeric(casetrain2$OverTime)
+
+caseNoSal$EducationField <- as.numeric(caseNoSal$EducationField)
+casetrain2$EducationField <- as.numeric(casetrain2$EducationField)
+
+caseNoSal$BusinessTravel <- as.numeric(caseNoSal$BusinessTravel)
+casetrain2$BusinessTravel <- as.numeric(casetrain2$BusinessTravel)
+
+caseNoSal$MonthlyIncome <- as.numeric(caseNoSal$MonthlyIncome)
+
+#tunedNOSAL <- knn(casetrain2[,c(21,15,25,13,31,28,16,9,4,20,17,27,29)],
+#                   caseNoSal[,c(21,15,25,13,31,28,16,9,4,20,17,27,29)],
+#                   casetrain2$MonthlyIncome, prob = TRUE,k=5)
+#tunedtableNOSAL <- table(caseNoSal$MonthlyIncome,tunedNOSAL)
+# DOESNT WORK
+#tunedcaseconfmatrixNOSAL <- confusionMatrix(tunedtableNOSAL)
+#print("kNN Competition Set Results")
+#tunedcaseconfmatrixNOSAL
+
+casefit <- lm(MonthlyIncome ~ YearsAtCompany + YearsInCurrentRole + YearsSinceLastPromotion + EnvironmentSatisfaction + OverTime + JobRole + NumCompaniesWorked + JobLevel, data = casetrain2)
+
+casefit_predNOSAL <- predict(casefit, caseNoSal)
+casepred_dfNOSAL <- as.data.frame(casefit_predNOSAL)
+
+# rmse = sqrt( mean( (sim - obs)^2, na.rm = TRUE) )
+MSPENOSAL <- data.frame(Observed = caseNoSal$MonthlyIncome, Predicted = casepred_dfNOSAL$casefit_predNOSAL)
+MSPENOSAL$Observed <- as.numeric(MSPENOSAL$Observed)
+MSPENOSAL$Residual = MSPENOSAL$Observed - MSPENOSAL$Predicted
+MSPENOSAL$SquareResidual = MSPENOSAL$Residual^2
+
+MSPENOSALmean <- mean(MSPENOSAL$SquareResidual)
+MSPENOSALmean
+
+RMSENOSAL <- rmse(caseNoSal$MonthlyIncome, predict(casefit,caseNoSal))
+RMSENOSAL
+
+
+
+summary(casefit)
+confint(casefit)
+tooclose <- select(caseNoSal,ID,MonthlyIncome)
+write.csv(tooclose,"C:/Users/THEBU/Desktop/Doing Data Science/Week 14/Project 2/Case2PredictionsWILDS Salary.csv", row.names = FALSE)
+
+
+
+
+```
+
